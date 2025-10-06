@@ -1,10 +1,10 @@
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, AsyncGenerator
 import os
 from document_processor import DocumentProcessor
 from vector_store import VectorStore
-from ai_generator import AIGenerator
+from ai_generator import AIGenerator, ConversationState
 from session_manager import SessionManager
-from search_tools import ToolManager, CourseSearchTool
+from search_tools import ToolManager, CourseSearchTool, CourseOutlineTool
 from models import Course, Lesson, CourseChunk
 
 class RAGSystem:
@@ -22,7 +22,9 @@ class RAGSystem:
         # Initialize search tools
         self.tool_manager = ToolManager()
         self.search_tool = CourseSearchTool(self.vector_store)
+        self.outline_tool = CourseOutlineTool(self.vector_store)
         self.tool_manager.register_tool(self.search_tool)
+        self.tool_manager.register_tool(self.outline_tool)
     
     def add_course_document(self, file_path: str) -> Tuple[Course, int]:
         """
@@ -139,6 +141,77 @@ class RAGSystem:
         # Return response with sources from tool searches
         return response, sources
     
+    async def query_stream(self, query: str, session_id: Optional[str] = None) -> AsyncGenerator[Dict, None]:
+        """
+        Process a user query using the RAG system with streaming state transitions.
+
+        Args:
+            query: User's question
+            session_id: Optional session ID for conversation context
+
+        Yields:
+            Dict objects containing state transition information
+        """
+        # Create prompt for the AI with clear instructions
+        prompt = f"""Answer this question about course materials: {query}"""
+
+        # Get conversation history if session exists
+        history = None
+        if session_id:
+            history = self.session_manager.get_conversation_history(session_id)
+
+        final_response = None
+
+        # Stream through state transitions
+        async for transition in self.ai_generator.generate_response_stream(
+            query=prompt,
+            conversation_history=history,
+            tools=self.tool_manager.get_tool_definitions(),
+            tool_manager=self.tool_manager
+        ):
+            # Yield transition info for real-time UI updates
+            yield {
+                "state": transition.to_state.name,
+                "trigger": transition.trigger,
+                "from_state": transition.from_state.name,
+                "data": {}  # Minimal data for now, can expand if needed
+            }
+
+            # Capture final response
+            if transition.to_state == ConversationState.COMPLETED:
+                final_response = transition.data.get("final_text")
+            elif transition.to_state == ConversationState.ERROR:
+                # Yield error information
+                error_msg = transition.data.get("error", "Unknown error")
+                yield {
+                    "state": "ERROR",
+                    "error": error_msg,
+                    "trigger": transition.trigger,
+                    "from_state": transition.from_state.name,
+                    "data": {}
+                }
+                return
+
+        # Get sources from the search tool
+        sources = self.tool_manager.get_last_sources()
+
+        # Update session history
+        if session_id and final_response:
+            self.session_manager.add_exchange(session_id, query, final_response)
+
+        # Reset sources after retrieving them
+        self.tool_manager.reset_sources()
+
+        # Yield final result
+        yield {
+            "state": "FINAL",
+            "response": final_response,
+            "sources": sources,
+            "trigger": "complete",
+            "from_state": "COMPLETED",
+            "data": {}
+        }
+
     def get_course_analytics(self) -> Dict:
         """Get analytics about the course catalog"""
         return {

@@ -149,3 +149,5 @@ Key settings in `Config` dataclass:
 
 ### Windows Development
 Use **Git Bash** to run shell scripts on Windows (not PowerShell/CMD).
+
+

@@ -5,9 +5,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import os
+import json
 
 from config import config
 from rag_system import RAGSystem
@@ -43,7 +45,7 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     """Response model for course queries"""
     answer: str
-    sources: List[str]
+    sources: List[Dict[str, Any]]
     session_id: str
 
 class CourseStats(BaseModel):
@@ -69,6 +71,56 @@ async def query_documents(request: QueryRequest):
             answer=answer,
             sources=sources,
             session_id=session_id
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/query/stream")
+async def query_documents_stream(request: QueryRequest):
+    """Process a query and stream state transitions with Server-Sent Events"""
+    try:
+        # Create session if not provided
+        session_id = request.session_id
+        if not session_id:
+            session_id = rag_system.session_manager.create_session()
+
+        async def event_generator():
+            try:
+                async for event in rag_system.query_stream(request.query, session_id):
+                    # Send SSE events
+                    event_data = {
+                        "state": event.get("state"),
+                        "trigger": event.get("trigger"),
+                        "from_state": event.get("from_state"),
+                        "session_id": session_id
+                    }
+
+                    # Add response and sources for final event
+                    if event.get("state") == "FINAL":
+                        event_data["response"] = event.get("response")
+                        event_data["sources"] = event.get("sources", [])
+
+                    # Add error info if present
+                    if event.get("error"):
+                        event_data["error"] = event.get("error")
+
+                    yield f"data: {json.dumps(event_data)}\n\n"
+            except Exception as e:
+                error_event = {
+                    "state": "ERROR",
+                    "error": str(e),
+                    "session_id": session_id
+                }
+                yield f"data: {json.dumps(error_event)}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
