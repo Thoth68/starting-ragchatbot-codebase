@@ -15,7 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
     sendButton = document.getElementById('sendButton');
     totalCourses = document.getElementById('totalCourses');
     courseTitles = document.getElementById('courseTitles');
-    
+
+    loadTheme();
     setupEventListeners();
     createNewSession();
     loadCourseStats();
@@ -28,8 +29,32 @@ function setupEventListeners() {
     chatInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') sendMessage();
     });
-    
-    
+
+    // Theme toggle button
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    if (themeToggleBtn) {
+        themeToggleBtn.addEventListener('click', toggleTheme);
+    }
+
+    // Clear chat button
+    const clearChatBtn = document.getElementById('clearChatBtn');
+    if (clearChatBtn) {
+        clearChatBtn.addEventListener('click', () => {
+            if (confirm('Are you sure you want to clear the chat history?')) {
+                createNewSession();
+            }
+        });
+    }
+
+    // Copy button functionality (using event delegation)
+    chatMessages.addEventListener('click', (e) => {
+        const copyBtn = e.target.closest('.copy-btn');
+        if (copyBtn) {
+            const content = copyBtn.getAttribute('data-content');
+            copyToClipboard(content, copyBtn);
+        }
+    });
+
     // Suggested questions
     document.querySelectorAll('.suggested-item').forEach(button => {
         button.addEventListener('click', (e) => {
@@ -121,6 +146,18 @@ function addMessage(content, type, sources = null, isWelcome = false) {
 
     let html = `<div class="message-content">${displayContent}</div>`;
 
+    // Add copy button for assistant messages (but not welcome message)
+    if (type === 'assistant' && !isWelcome) {
+        html += `
+            <button class="copy-btn" data-content="${escapeHtml(content)}" title="Copy message">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+            </button>
+        `;
+    }
+
     if (sources && sources.length > 0) {
         // Format sources as clickable links or plain text
         const formattedSources = sources.map(source => {
@@ -164,6 +201,44 @@ async function createNewSession() {
     currentSessionId = null;
     chatMessages.innerHTML = '';
     addMessage('Welcome to the Course Materials Assistant! I can help you with questions about courses, lessons and specific content. What would you like to know?', 'assistant', null, true);
+}
+
+// Theme management
+function loadTheme() {
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+}
+
+function toggleTheme() {
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+
+    document.documentElement.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+}
+
+// Copy to clipboard functionality
+async function copyToClipboard(text, button) {
+    try {
+        await navigator.clipboard.writeText(text);
+
+        // Visual feedback
+        const originalHTML = button.innerHTML;
+        button.innerHTML = `
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        `;
+        button.classList.add('copied');
+
+        setTimeout(() => {
+            button.innerHTML = originalHTML;
+            button.classList.remove('copied');
+        }, 2000);
+    } catch (err) {
+        console.error('Failed to copy:', err);
+        alert('Failed to copy message');
+    }
 }
 
 // Load course statistics
